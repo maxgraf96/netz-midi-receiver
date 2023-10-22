@@ -10,6 +10,7 @@ add_subdirectory(JUCE)
 set(SOURCES
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
+        Source/MessageReceiver.h
         # Add other source files here
 )
 
@@ -17,6 +18,7 @@ set(SOURCES
 set(HEADERS
         Source/PluginProcessor.h
         Source/PluginEditor.h
+        Source/MessageReceiver.h
         # Add other header files here
 )
 

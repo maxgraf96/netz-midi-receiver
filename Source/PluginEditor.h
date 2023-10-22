@@ -9,6 +9,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "MessageReceiver.h"
 
 class NetzMIDIReceiverAudioProcessorEditor  :
         public juce::AudioProcessorEditor,
@@ -34,7 +35,10 @@ private:
     String senderIP;
     std::atomic<bool> isConnected = false;
 
-    // TODO: Add any Component objects or other member variables here.
+    int BROADCAST_PORT = 12345;
+    int RECEIVE_PORT = 12346;
+
+    std::unique_ptr<MessageReceiver> messageReceiver;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NetzMIDIReceiverAudioProcessorEditor)
 };

@@ -14,21 +14,25 @@ NetzMIDIReceiverAudioProcessorEditor::NetzMIDIReceiverAudioProcessorEditor (Netz
     setSize (400, 300);
     startTimer(2000);
 
+    messageReceiver = std::make_unique<MessageReceiver>(12347);
+
     // Add a job to the thread pool using a lambda
     threadPool.addJob([&]()
     {
         std::unique_ptr<DatagramSocket> socket = std::make_unique<DatagramSocket>(true);
         std::unique_ptr<DatagramSocket> receiveSocket = std::make_unique<DatagramSocket>(true);
-        receiveSocket->bindToPort(12346);
+        receiveSocket->bindToPort(RECEIVE_PORT);
 
-        String requestData = "SomeRequestData";
+        // Get the local IP address
+        juce::IPAddress localIP = juce::IPAddress::local();
+        String broadcastData = "netz-midi-receiver: ping.";
 
         // Convert JUCE string to MemoryBlock for sending
-        MemoryBlock requestDataBlock(requestData.toRawUTF8(), requestData.getNumBytesAsUTF8());
+        MemoryBlock broadcastDataBlock(broadcastData.toRawUTF8(), broadcastData.getNumBytesAsUTF8());
 
         while(!isConnected){
             // Send the request
-            bool sendResult = socket->write("255.255.255.255", 12345, requestDataBlock.getData(), requestDataBlock.getSize());
+            bool sendResult = socket->write("255.255.255.255", BROADCAST_PORT, broadcastDataBlock.getData(), broadcastDataBlock.getSize());
 
             if (!sendResult)
             {
@@ -40,17 +44,22 @@ NetzMIDIReceiverAudioProcessorEditor::NetzMIDIReceiverAudioProcessorEditor (Netz
             int senderPort;
 
             // Receive the server response
-            int bytesRead = receiveSocket->read(buffer, sizeof(buffer), true);
+            int bytesRead = receiveSocket->read(buffer, sizeof(buffer), false, senderIP, senderPort);
 
-            if (bytesRead > 0)
-            {
-                String serverResponse = String::fromUTF8(buffer, bytesRead);
-                DBG("Received " + serverResponse + " from " + senderIP);
-                isConnected = true;
-            }
-            else
-            {
-                DBG("Failed to receive a response.");
+            if(senderPort == RECEIVE_PORT || senderPort == BROADCAST_PORT){
+                if (bytesRead > 0)
+                {
+                    String serverResponse = String::fromUTF8(buffer, bytesRead);
+                    DBG("Received " + serverResponse + " from " + senderIP);
+                    isConnected = true;
+                    receiveSocket->shutdown();
+
+                    messageReceiver->startThread();
+                }
+                else
+                {
+                    DBG("Failed to receive a response.");
+                }
             }
 
             juce::Thread::sleep(100);
