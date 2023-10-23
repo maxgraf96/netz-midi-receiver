@@ -7,28 +7,47 @@
 
 #include <JuceHeader.h>
 
+enum MIDIMessageType {
+    NOTE_ON = 0,
+    NOTE_OFF = 1,
+    PITCH_BEND = 2,
+    UNDEFINED = 3
+};
+
 struct MIDIMessage {
+    MIDIMessageType type;
     int channel;
     int note;
     int velocity;
-    bool isNoteOn;
+    int pitchBend;
 
     MIDIMessage(){
+        this->type = UNDEFINED;
         this->channel = 0;
         this->note = 0;
         this->velocity = 0;
-        this->isNoteOn = false;
     }
 
-    MIDIMessage(int channel, int note, int velocity, bool isNoteOn) {
+    MIDIMessage(MIDIMessageType type, int channel, int note, int velocity, bool isNoteOn) {
+        this->type = type;
         this->channel = channel;
         this->note = note;
         this->velocity = velocity;
-        this->isNoteOn = isNoteOn;
+    }
+
+    MIDIMessage(MIDIMessageType type, int channel, int pitchBend) {
+        this->type = type;
+        this->channel = channel;
+        this->pitchBend = pitchBend;
     }
 
     String toString() const {
-        return "Channel: " + String(channel) + ", Note: " + String(note) + ", Velocity: " + String(velocity) + ", isNoteOn: " + (isNoteOn ? "true" : "false");
+        if(type == NOTE_ON || type == NOTE_OFF)
+            return "Type: " + String(type) + ", Channel: " + String(channel) + ", Note: " + String(note) + ", Velocity: " + String(velocity);
+        else if(type == PITCH_BEND)
+            return "Type: " + String(type) + ", Channel: " + String(channel) + ", Pitch Bend: " + String(pitchBend);
+        else
+            return "Type: " + String(type) + ", Channel: " + String(channel);
     }
 };
 

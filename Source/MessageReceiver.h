@@ -22,6 +22,14 @@ public:
         this->receivePort = receivePort;
     }
 
+    struct DataBuffer {
+        MIDIMessageType type;
+        int channel;
+        int note;
+        int velocity;
+        float pitchBend;
+    };
+
     void run() override
     {
         socket = std::make_unique<StreamingSocket>();
@@ -36,28 +44,40 @@ public:
 
                 while (clientSocket)
                 {
-                    int buffer[3]; // Receive 3 ints -> 3 * 4 bytes
-                    int bytesRead = clientSocket->read(buffer, sizeof(buffer), true);
+                    // Receive 4 mixed ints/floats
+                    DataBuffer buffer{};
+                    int bytesRead = clientSocket->read(&buffer, sizeof(buffer), true);
 
                     if (bytesRead > 0)
                     {
                         // Convert char array to int array
-                        int channel = buffer[0];
-                        int note = buffer[1];
-                        int velocity = buffer[2];
+                        MIDIMessageType type = buffer.type;
+                        int channel = buffer.channel;
+                        int note = buffer.note;
+                        int velocity = buffer.velocity;
+                        // Map pitch bend from our bend in semitones (-7 to 7) to JUCE's 0-16383 range
+                        int bend = (int) ((buffer.pitchBend + 7.0f) / 14 * 16383);
 
-                        if(note < 0 || note > 128)
-                            continue;
-
-                        if(velocity > 0){
-                            // Note on
-                            messageQueue.enqueue(MIDIMessage(channel, note, velocity, true));
-                            editorQueue.enqueue(MIDIMessage(channel, note, velocity, true));
-                        } else {
-                            // Note off
-                            messageQueue.enqueue(MIDIMessage(channel, note, 0, false));
-                            editorQueue.enqueue(MIDIMessage(channel, note, 0, false));
+                        switch(type){
+                            case NOTE_ON:
+                                // Note on
+                                messageQueue.enqueue(MIDIMessage(type, channel, note, velocity, true));
+                                editorQueue.enqueue(MIDIMessage(type, channel, note, velocity, true));
+                                break;
+                            case NOTE_OFF:
+                                // Note off
+                                messageQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
+                                editorQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
+                                break;
+                            case PITCH_BEND:
+                                // Pitch bend
+                                messageQueue.enqueue(MIDIMessage(type, channel, bend));
+                                editorQueue.enqueue(MIDIMessage(type, channel, bend));
+                                break;
+                            default:
+                                break;
                         }
+
                     } else if(bytesRead <= 0){
                         // Socket closed, wait for another connection
                         DBG("Connection closed.");

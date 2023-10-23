@@ -82,10 +82,23 @@ void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buff
     while (messageQueue.try_dequeue(message)) {
         auto note = message.note;
         auto velocity = (uint8) message.velocity;
-        if (message.isNoteOn) {
-            midiMessages.addEvent(MidiMessage::noteOn(1, note, velocity), 1);
-        } else {
-            midiMessages.addEvent(MidiMessage::noteOff(1, note), 1);
+        auto channel = message.channel;
+
+        switch (message.type) {
+            case NOTE_ON:
+                midiMessages.addEvent(MidiMessage::noteOn(channel, note, velocity), 0);
+                break;
+            case NOTE_OFF:
+                midiMessages.addEvent(MidiMessage::noteOff(channel, note), 0);
+                // Reset pitch bend
+                midiMessages.addEvent(MidiMessage::pitchWheel(channel, 8192), 0);
+                break;
+            case PITCH_BEND:
+                // JUCE pitch wheel is in range 0 to 16383
+                midiMessages.addEvent(MidiMessage::pitchWheel(channel, message.pitchBend), 0);
+                break;
+            case UNDEFINED:
+                break;
         }
     }
 
