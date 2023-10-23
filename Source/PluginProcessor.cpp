@@ -6,9 +6,15 @@
 #include "PluginEditor.h"
 
 NetzMIDIReceiverAudioProcessor::NetzMIDIReceiverAudioProcessor()
-        : AudioProcessor(BusesProperties()
-                                 .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                                 .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+        : AudioProcessor (BusesProperties()
+#if ! JucePlugin_IsMidiEffect
+#if ! JucePlugin_IsSynth
+                       .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                      #endif
+                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
+#endif
+)
+{
 }
 
 NetzMIDIReceiverAudioProcessor::~NetzMIDIReceiverAudioProcessor() {
@@ -109,14 +115,23 @@ void NetzMIDIReceiverAudioProcessor::releaseResources() {
 void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
     // Process incoming MIDI messages and generate output MIDI messages
     // Look for MIDI messages in the queue
+    midiMessages.clear();
+
     MIDIMessage message;
     while (messageQueue.try_dequeue(message)) {
+        auto note = message.note;
+        auto velocity = (uint8) message.velocity;
         if (message.isNoteOn) {
-            midiMessages.addEvent(MidiMessage::noteOn(1, message.note, (uint8) message.velocity), 0);
+            midiMessages.addEvent(MidiMessage::noteOn(1, note, velocity), 1);
         } else {
-            midiMessages.addEvent(MidiMessage::noteOff(1, message.note), 0);
+            midiMessages.addEvent(MidiMessage::noteOff(1, note), 1);
         }
     }
+
+    // Clear audio buffer
+    buffer.clear();
+
+
 }
 
 bool NetzMIDIReceiverAudioProcessor::hasEditor() const {

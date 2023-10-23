@@ -31,35 +31,34 @@ public:
 
                 while (clientSocket)
                 {
-                    char buffer[16];
+                    int buffer[3]; // Receive 3 ints -> 3 * 4 bytes
                     int bytesRead = clientSocket->read(buffer, sizeof(buffer), true);
 
                     if (bytesRead > 0)
                     {
-                        String message(buffer, bytesRead);
-                        DBG("TCP: Received: " << message);
+                        if (JUCE_LITTLE_ENDIAN)
+                        {
+                            for (int & i : buffer)
+                            {
+                                i = ByteOrder::swap(i);
+                            }
+                        }
+                        // Convert char array to int array
+                        int note = buffer[0];
+                        int channel = buffer[1];
+                        int velocity = buffer[2];
 
-                        // Get first character of message as integer
-                        int type = message.substring(0, 1).getIntValue();
-                        int note, velocity;
-                        // TODO Update
-                        int channel = 1;
-                        switch (type) {
-                            case 1:
-                                // Note on
-                                note = message.substring(1, 2).getIntValue();
-                                velocity = message.substring(2, 3).getIntValue();
-                                messageQueue.enqueue(MIDIMessage(channel, note, velocity, true));
-                                editorQueue.enqueue(MIDIMessage(channel, note, velocity, true));
-                                break;
-                            case 2:
-                                // Note off
-                                note = message.substring(1, 2).getIntValue();
-                                messageQueue.enqueue(MIDIMessage(channel, note, 0, false));
-                                editorQueue.enqueue(MIDIMessage(channel, note, 0, false));
-                                break;
-                            default:
-                                break;
+                        if(note < 0 || note > 128)
+                            continue;
+
+                        if(velocity > 0){
+                            // Note on
+                            messageQueue.enqueue(MIDIMessage(channel, note, velocity, true));
+                            editorQueue.enqueue(MIDIMessage(channel, note, velocity, true));
+                        } else {
+                            // Note off
+                            messageQueue.enqueue(MIDIMessage(channel, note, 0, false));
+                            editorQueue.enqueue(MIDIMessage(channel, note, 0, false));
                         }
                     }
                 }
