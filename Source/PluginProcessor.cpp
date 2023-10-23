@@ -60,50 +60,11 @@ void NetzMIDIReceiverAudioProcessor::changeProgramName(int index, const juce::St
 }
 
 void NetzMIDIReceiverAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
-    messageReceiver = std::make_unique<MessageReceiver>(12347, messageQueue, editorQueue);
+    messageReceiver = std::make_unique<MessageReceiver>(12347, messageQueue, editorQueue, connectionLostQ);
 
     // Add a job to the thread pool using a lambda
     threadPool.addJob([&]() {
-        std::unique_ptr<DatagramSocket> socket = std::make_unique<DatagramSocket>(true);
-        std::unique_ptr<DatagramSocket> receiveSocket = std::make_unique<DatagramSocket>(true);
-        receiveSocket->bindToPort(RECEIVE_PORT);
-
-        String broadcastData = "netz-midi-receiver: ping.";
-
-        // Convert JUCE string to MemoryBlock for sending
-        MemoryBlock broadcastDataBlock(broadcastData.toRawUTF8(), broadcastData.getNumBytesAsUTF8());
-
-        while (!isConnected) {
-            // Send the request
-            bool sendResult = socket->write("255.255.255.255", BROADCAST_PORT, broadcastDataBlock.getData(),
-                                            broadcastDataBlock.getSize());
-
-            if (!sendResult) {
-                DBG("Failed to send request.");
-                return 1; // Exit with an error code
-            }
-
-            char buffer[512]; // Assuming 512 bytes is enough for the response; adjust as needed
-            int senderPort;
-
-            // Receive the server response
-            int bytesRead = receiveSocket->read(buffer, sizeof(buffer), false, senderIP, senderPort);
-
-            if (senderPort == RECEIVE_PORT || senderPort == BROADCAST_PORT) {
-                if (bytesRead > 0) {
-                    String serverResponse = String::fromUTF8(buffer, bytesRead);
-                    DBG("Received " + serverResponse + " from " + senderIP);
-                    isConnected = true;
-                    receiveSocket->shutdown();
-
-                    messageReceiver->startThread();
-                } else {
-                    DBG("Failed to receive a response.");
-                }
-            }
-
-            juce::Thread::sleep(100);
-        }
+        lookForBeacons();
     });
 }
 
@@ -131,7 +92,63 @@ void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buff
     // Clear audio buffer
     buffer.clear();
 
+    bool connectionLost = false;
+    while(connectionLostQ.try_dequeue(connectionLost)){
+        if(connectionLost){
+            DBG("Connection lost.");
+            // Execute the lambda on the message thread
+            juce::MessageManager::callAsync([this]() {
+                threadPool.addJob([&]() {
+                    lookForBeacons();
+                });
+            });
+        }
+    }
+}
 
+void NetzMIDIReceiverAudioProcessor::lookForBeacons() {
+    isConnected = false;
+    std::unique_ptr<DatagramSocket> socket = std::make_unique<DatagramSocket>(true);
+    std::unique_ptr<DatagramSocket> receiveSocket = std::make_unique<DatagramSocket>(true);
+    receiveSocket->bindToPort(RECEIVE_PORT);
+
+    String broadcastData = "netz-midi-receiver: ping.";
+
+    // Convert JUCE string to MemoryBlock for sending
+    MemoryBlock broadcastDataBlock(broadcastData.toRawUTF8(), broadcastData.getNumBytesAsUTF8());
+
+    while (!isConnected) {
+        // Send the request
+        bool sendResult = socket->write("255.255.255.255", BROADCAST_PORT, broadcastDataBlock.getData(),
+                                        broadcastDataBlock.getSize());
+
+        if (!sendResult) {
+            DBG("Failed to send request.");
+            return;
+        }
+
+        char buffer[512]; // Assuming 512 bytes is enough for the response; adjust as needed
+        int senderPort;
+
+        // Receive the server response
+        int bytesRead = receiveSocket->read(buffer, sizeof(buffer), false, senderIP, senderPort);
+
+        if (senderPort == RECEIVE_PORT || senderPort == BROADCAST_PORT) {
+            if (bytesRead > 0) {
+                String serverResponse = String::fromUTF8(buffer, bytesRead);
+                DBG("Received " + serverResponse + " from " + senderIP);
+                isConnected = true;
+                receiveSocket->shutdown();
+
+                if(!messageReceiver->isThreadRunning())
+                    messageReceiver->startThread();
+            } else {
+                DBG("Failed to receive a response.");
+            }
+        }
+
+        juce::Thread::sleep(100);
+    }
 }
 
 bool NetzMIDIReceiverAudioProcessor::hasEditor() const {

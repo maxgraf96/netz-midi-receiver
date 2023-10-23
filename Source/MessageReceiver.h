@@ -12,8 +12,13 @@
 class MessageReceiver : public juce::Thread
 {
 public:
-    MessageReceiver(int receivePort, moodycamel::ReaderWriterQueue<MIDIMessage>& q, moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue)
-        : juce::Thread("Message Receiver"), socket(nullptr), messageQueue(q), editorQueue(editorQueue) {
+    MessageReceiver(int receivePort, moodycamel::ReaderWriterQueue<MIDIMessage>& q, moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue, moodycamel::ReaderWriterQueue<bool>& connectionLostQ)
+        : juce::Thread("Message Receiver"),
+        socket(nullptr),
+        messageQueue(q),
+        editorQueue(editorQueue),
+        connectionLostQ(connectionLostQ)
+        {
         this->receivePort = receivePort;
     }
 
@@ -36,16 +41,9 @@ public:
 
                     if (bytesRead > 0)
                     {
-                        if (JUCE_LITTLE_ENDIAN)
-                        {
-                            for (int & i : buffer)
-                            {
-                                i = ByteOrder::swap(i);
-                            }
-                        }
                         // Convert char array to int array
-                        int note = buffer[0];
-                        int channel = buffer[1];
+                        int channel = buffer[0];
+                        int note = buffer[1];
                         int velocity = buffer[2];
 
                         if(note < 0 || note > 128)
@@ -60,6 +58,11 @@ public:
                             messageQueue.enqueue(MIDIMessage(channel, note, 0, false));
                             editorQueue.enqueue(MIDIMessage(channel, note, 0, false));
                         }
+                    } else if(bytesRead <= 0){
+                        // Socket closed, wait for another connection
+                        DBG("Connection closed.");
+                        connectionLostQ.enqueue(true);
+                        break;
                     }
                 }
             }
@@ -77,6 +80,7 @@ private:
     std::unique_ptr<StreamingSocket> socket;
     moodycamel::ReaderWriterQueue<MIDIMessage>& messageQueue;
     moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue;
+    moodycamel::ReaderWriterQueue<bool>& connectionLostQ;
     int receivePort;
 };
 

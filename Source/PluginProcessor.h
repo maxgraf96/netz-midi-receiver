@@ -46,6 +46,8 @@ public:
         return isConnected;
     }
 
+    void lookForBeacons();
+
 private:
     juce::ThreadPool threadPool;
 
@@ -60,6 +62,7 @@ private:
     // This one is connected to the message receiver thread
     moodycamel::ReaderWriterQueue<MIDIMessage> messageQueue;
     moodycamel::ReaderWriterQueue<MIDIMessage> editorQueue;
+    moodycamel::ReaderWriterQueue<bool> connectionLostQ;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NetzMIDIReceiverAudioProcessor)
 };
 

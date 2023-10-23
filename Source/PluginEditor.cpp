@@ -43,7 +43,7 @@ NetzMIDIReceiverAudioProcessorEditor::NetzMIDIReceiverAudioProcessorEditor (Netz
     viewport.setBounds(0, 20, getParentWidth(), getParentHeight() - 20);
     viewport.setLookAndFeel(&customLookAndFeel);
 
-    startTimer(300);
+    startTimer(50);
 
     resized();
 }
