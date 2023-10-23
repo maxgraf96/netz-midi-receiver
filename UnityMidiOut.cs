@@ -20,6 +20,12 @@ public class MIDIOut : MonoBehaviour
 
     private TcpClient tcpClient;
 
+    public enum MIDIType
+    {
+        NoteOn = 1,
+        NoteOff,
+        ControlChange,
+    }
     void Start()
     {
         Application.targetFrameRate = 60;
@@ -34,46 +40,49 @@ public class MIDIOut : MonoBehaviour
     {
         Debug.Log("Sending note on message to all connected clients: " + note + " " + velocity);
 
-        String message = "noteon " + note + " " + velocity;
-        // Pad to 16 bytes
-        message = message.PadRight(16, ' ');
+        int channel = 1;
+        int[] integers = {channel, note, velocity};
+        byte[] data = new byte[integers.Length * sizeof(int)];
+
+        BitConverter.GetBytes(channel).CopyTo(data, 0);
+        BitConverter.GetBytes(note).CopyTo(data, sizeof(int));
+        BitConverter.GetBytes(velocity).CopyTo(data, sizeof(int) * 2);
+
         // Send note on message to all connected clients
-        tcpClient.Client.Send(Encoding.UTF8.GetBytes(message));
+        tcpClient.GetStream().Write(data, 0, data.Length);
         foreach (var client in connectedClients)
         {
         }
     }
 
-    private void SendNoteOffMessage(int i)
+    private void SendNoteOffMessage(int note)
     {
-        Debug.Log("Sending note off message to all connected clients: " + i);
-        String message = "noteoff " + i;
-        // Pad to 16 bytes
-        message = message.PadRight(16, ' ');
+        Debug.Log("Sending note off message to all connected clients: " + note);
+
+        int channel = 1;
+        int velocity = 0;
+        int[] integers = {channel, note, velocity};
+        byte[] data = new byte[integers.Length * sizeof(int)];
+
+        BitConverter.GetBytes(channel).CopyTo(data, 0);
+        BitConverter.GetBytes(note).CopyTo(data, sizeof(int));
+        BitConverter.GetBytes(velocity).CopyTo(data, sizeof(int) * 2);
+
         // Send note off message to all connected clients
+        tcpClient.GetStream().Write(data, 0, data.Length);
+
         foreach (var client in connectedClients)
         {
-            tcpClient.Client.Send(Encoding.UTF8.GetBytes(message));
         }
     }
 
     void RegisterMidiReceiver(string ip)
     {
         // Add to list of connected clients
-        // if (!connectedClients.Keys.ToList().Contains(ip))
-        // {
+        if(!connectedClients.TryAdd(ip, tcpClient))
+            return;
+
         tcpClient = new TcpClient(ip, 12347);
-        NetworkStream stream = tcpClient.GetStream();
-
-        for (int i = 0; i < 5; i++)
-        {
-            byte[] data = Encoding.UTF8.GetBytes("Hello from netz!");
-            stream.Write(data, 0, data.Length);
-
-            Thread.Sleep(500);
-        }
-
-        connectedClients.TryAdd(ip, tcpClient);
 
         Debug.Log("Successfully registered MIDI receiver at " + ip);
 
@@ -164,12 +173,14 @@ public class MIDIOut : MonoBehaviour
 
     private void OnApplicationQuit()
     {
+        Debug.Log("Closing connection to all clients.");
         // foreach (var client in connectedClients)
         // {
             // client.Value.GetStream().Close();
             // client.Value.Close();
         // }
 
+        // Close connection to client
         tcpClient.GetStream().Close();
         tcpClient.Close();
     }
