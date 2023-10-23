@@ -8,6 +8,9 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <readerwriterqueue.h>
+#include "MessageReceiver.h"
+#include "MIDIMessage.h"
 
 class NetzMIDIReceiverAudioProcessor  : public juce::AudioProcessor
 {
@@ -39,7 +42,24 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    bool getConnected() const {
+        return isConnected;
+    }
+
 private:
+    juce::ThreadPool threadPool;
+
+    String senderIP;
+    std::atomic<bool> isConnected = false;
+
+    int BROADCAST_PORT = 12345;
+    int RECEIVE_PORT = 12346;
+
+    std::unique_ptr<MessageReceiver> messageReceiver;
+
+    // This one is connected to the message receiver thread
+    moodycamel::ReaderWriterQueue<MIDIMessage> messageQueue;
+    moodycamel::ReaderWriterQueue<MIDIMessage> editorQueue;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NetzMIDIReceiverAudioProcessor)
 };
 

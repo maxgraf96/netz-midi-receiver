@@ -8,15 +8,18 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <readerwriterqueue.h>
+
 #include "PluginProcessor.h"
-#include "MessageReceiver.h"
+#include "MIDIMessage.h"
+#include "CustomLookAndFeel.h"
 
 class NetzMIDIReceiverAudioProcessorEditor  :
         public juce::AudioProcessorEditor,
         public juce::Timer
 {
 public:
-    NetzMIDIReceiverAudioProcessorEditor (NetzMIDIReceiverAudioProcessor&);
+    NetzMIDIReceiverAudioProcessorEditor (NetzMIDIReceiverAudioProcessor&, moodycamel::ReaderWriterQueue<MIDIMessage>& messageQueue);
     ~NetzMIDIReceiverAudioProcessorEditor() override;
 
     void paint (juce::Graphics&) override;
@@ -24,21 +27,16 @@ public:
 
     void timerCallback() override;
 
-
-
 private:
     // Reference to our processor
     NetzMIDIReceiverAudioProcessor& processor;
+    moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue;
 
-    juce::ThreadPool threadPool;
-
-    String senderIP;
-    std::atomic<bool> isConnected = false;
-
-    int BROADCAST_PORT = 12345;
-    int RECEIVE_PORT = 12346;
-
-    std::unique_ptr<MessageReceiver> messageReceiver;
+    CustomLookAndFeel customLookAndFeel;
+    Label titleLabel;
+    Label connectedLabel;
+    juce::TextEditor textEditor;
+    juce::Viewport viewport;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NetzMIDIReceiverAudioProcessorEditor)
 };

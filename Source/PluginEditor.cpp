@@ -7,101 +7,102 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-NetzMIDIReceiverAudioProcessorEditor::NetzMIDIReceiverAudioProcessorEditor (NetzMIDIReceiverAudioProcessor& p)
-        : AudioProcessorEditor (&p), processor (p)
+NetzMIDIReceiverAudioProcessorEditor::NetzMIDIReceiverAudioProcessorEditor (NetzMIDIReceiverAudioProcessor& p, moodycamel::ReaderWriterQueue<MIDIMessage>& messageQueue)
+        : AudioProcessorEditor (&p), processor (p), editorQueue(messageQueue)
 {
     // Set the size of the editor window.
     setSize (400, 300);
-    startTimer(2000);
+    setResizable(true, true);
 
-    messageReceiver = std::make_unique<MessageReceiver>(12347);
+    titleLabel.setText("Netz MIDI Receiver", dontSendNotification);
+    titleLabel.setJustificationType(Justification::left);
+    titleLabel.setFont(Font(18.0f, Font::italic));
+    titleLabel.setColour(Label::textColourId, Colours::white);
+    titleLabel.setBounds(0, 0, 200, 20);
+    addAndMakeVisible(titleLabel);
 
-    // Add a job to the thread pool using a lambda
-    threadPool.addJob([&]()
-    {
-        std::unique_ptr<DatagramSocket> socket = std::make_unique<DatagramSocket>(true);
-        std::unique_ptr<DatagramSocket> receiveSocket = std::make_unique<DatagramSocket>(true);
-        receiveSocket->bindToPort(RECEIVE_PORT);
+    connectedLabel.setText("Not connected.", dontSendNotification);
+    connectedLabel.setJustificationType(Justification::right);
+    connectedLabel.setFont(Font(18.0f, Font::italic));
+    connectedLabel.setColour(Label::textColourId, Colours::white);
+    connectedLabel.setBounds(180, 0, 100, 20);
+    connectedLabel.setColour(Label::backgroundColourId, Colours::red);
+    addAndMakeVisible(connectedLabel);
 
-        // Get the local IP address
-        juce::IPAddress localIP = juce::IPAddress::local();
-        String broadcastData = "netz-midi-receiver: ping.";
+    // Make the text editor multi-line and read-only (if desired)
+    textEditor.setMultiLine(true);
+    textEditor.setReadOnly(true);
+    textEditor.setColour(juce::TextEditor::textColourId, juce::Colours::white);
+    textEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colours::black);
 
-        // Convert JUCE string to MemoryBlock for sending
-        MemoryBlock broadcastDataBlock(broadcastData.toRawUTF8(), broadcastData.getNumBytesAsUTF8());
+    // Add the text editor to the viewport
+    viewport.setViewedComponent(&textEditor, false);
 
-        while(!isConnected){
-            // Send the request
-            bool sendResult = socket->write("255.255.255.255", BROADCAST_PORT, broadcastDataBlock.getData(), broadcastDataBlock.getSize());
+    textEditor.setBounds(0, 0, getParentWidth(), getParentHeight() - 20);
+    addAndMakeVisible(viewport);
+    viewport.setBounds(0, 20, getParentWidth(), getParentHeight() - 20);
+    viewport.setLookAndFeel(&customLookAndFeel);
 
-            if (!sendResult)
-            {
-                DBG("Failed to send request.");
-                return 1; // Exit with an error code
-            }
+    startTimer(300);
 
-            char buffer[512]; // Assuming 512 bytes is enough for the response; adjust as needed
-            int senderPort;
-
-            // Receive the server response
-            int bytesRead = receiveSocket->read(buffer, sizeof(buffer), false, senderIP, senderPort);
-
-            if(senderPort == RECEIVE_PORT || senderPort == BROADCAST_PORT){
-                if (bytesRead > 0)
-                {
-                    String serverResponse = String::fromUTF8(buffer, bytesRead);
-                    DBG("Received " + serverResponse + " from " + senderIP);
-                    isConnected = true;
-                    receiveSocket->shutdown();
-
-                    messageReceiver->startThread();
-                }
-                else
-                {
-                    DBG("Failed to receive a response.");
-                }
-            }
-
-            juce::Thread::sleep(100);
-        }
-    });
+    resized();
 }
 
 NetzMIDIReceiverAudioProcessorEditor::~NetzMIDIReceiverAudioProcessorEditor()
 {
     // Destructor. Any cleanup code can be added here.
-    threadPool.removeAllJobs(true, 100, nullptr);
 }
 
 void NetzMIDIReceiverAudioProcessorEditor::paint (juce::Graphics& g)
 {
     // Clear the background
-    if(!isConnected)
-        g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
-    else
+    if(processor.getConnected())
         g.fillAll (juce::Colours::darkgreen);
-
-    // You can add additional drawing code here.
-    g.setFont (juce::Font (16.0f));
-    g.setColour (juce::Colours::white);
-
-    // Get position to draw randomly on screen
-    int x = Random::getSystemRandom().nextInt(getWidth()) - 100;
-    int y = Random::getSystemRandom().nextInt(getHeight()) - 100;
-    // Create a rectangle to draw text in
-    Rectangle<int> textArea(x, y, 300, 100);
-
-    String connectedText = "Connected to " + senderIP;
-    g.drawText (isConnected ? "Connected to " + senderIP + "!" : "Not connected.", textArea, juce::Justification::centred, true);
+    else
+        g.fillAll (juce::Colours::black);
 }
 
 void NetzMIDIReceiverAudioProcessorEditor::resized()
 {
-    // This is called when the NetzMIDIReceiverAudioProcessorEditor is resized.
-    // You can adjust the positions and sizes of any child components here.
+    //viewport.setBounds(getLocalBounds());
+    juce::FlexBox flexBox;
+    juce::FlexBox titleFlexBox;
+
+    flexBox.flexDirection = juce::FlexBox::Direction::column;  // Vertical layout
+
+    titleFlexBox.flexDirection = juce::FlexBox::Direction::row;  // Horizontal layout
+    titleFlexBox.justifyContent = juce::FlexBox::JustifyContent::spaceBetween;  // Put space between the two items
+    titleFlexBox.items.add(juce::FlexItem(titleLabel).withFlex(1));  // titleLabel will take up half the width
+    titleFlexBox.items.add(juce::FlexItem(connectedLabel).withFlex(1));  // connectedLabel will take up the other half
+    titleFlexBox.performLayout(Rectangle<float>(0, 0, getWidth(), 20));
+
+    // Add the top bar and viewport (containing the text editor) to the main flexbox
+    flexBox.items.add(juce::FlexItem(titleFlexBox).withHeight(20));
+    flexBox.items.add(juce::FlexItem(viewport).withFlex(1));  // The viewport will take up the remaining space
+
+    // Perform the layout
+    flexBox.performLayout(getLocalBounds());
+
 }
 
 void NetzMIDIReceiverAudioProcessorEditor::timerCallback()
 {
     repaint();
+
+    if(processor.getConnected()){
+        connectedLabel.setColour(juce::Label::backgroundColourId, juce::Colours::darkgreen);
+        connectedLabel.setText("Connected.", dontSendNotification);
+        textEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colours::darkgreen);
+    } else {
+        connectedLabel.setColour(juce::Label::backgroundColourId, juce::Colours::red);
+        connectedLabel.setText("Not connected.", dontSendNotification);
+        textEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colours::black);
+    }
+
+    // Empty the queue
+    MIDIMessage message;
+    while(editorQueue.try_dequeue(message)){
+        textEditor.moveCaretToEnd();
+        textEditor.insertTextAtCaret(message.toString() + "\n");
+    }
 }

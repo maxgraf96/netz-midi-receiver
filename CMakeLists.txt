@@ -11,7 +11,8 @@ set(SOURCES
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/MessageReceiver.h
-        # Add other source files here
+        Source/MIDIMessage.h
+        Source/CustomLookAndFeel.h
 )
 
 # Define the plugin's headers
@@ -19,7 +20,8 @@ set(HEADERS
         Source/PluginProcessor.h
         Source/PluginEditor.h
         Source/MessageReceiver.h
-        # Add other header files here
+        Source/MIDIMessage.h
+        Source/CustomLookAndFeel.h
 )
 
 # Define the VST3 UID - you should change this to a unique value
@@ -42,13 +44,25 @@ juce_generate_juce_header(NetzMIDIReceiver)
 
 target_sources(NetzMIDIReceiver PRIVATE ${SOURCES} ${HEADERS})
 
+include(FetchContent)
+FetchContent_Declare(
+        readerwriterqueue
+        GIT_REPOSITORY    https://github.com/cameron314/readerwriterqueue
+        GIT_TAG           master
+)
+FetchContent_MakeAvailable(readerwriterqueue)
+
 target_compile_definitions(NetzMIDIReceiver
         PRIVATE
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_VST3_CAN_REPLACE_VST2=0)
 
-target_link_libraries(NetzMIDIReceiver PRIVATE
+target_link_libraries(NetzMIDIReceiver
+        PUBLIC
+        readerwriterqueue
+
+        PRIVATE
         juce::juce_audio_basics
         juce::juce_audio_utils
         juce::juce_audio_devices

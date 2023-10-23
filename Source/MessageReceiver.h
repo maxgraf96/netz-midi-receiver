@@ -6,11 +6,14 @@
 #define NETZ_MIDI_RECEIVER_MESSAGERECEIVER_H
 
 #include <JuceHeader.h>
+#include <readerwriterqueue.h>
+#include "MIDIMessage.h"
 
 class MessageReceiver : public juce::Thread
 {
 public:
-    MessageReceiver(int receivePort) : juce::Thread("Message Receiver"), socket(nullptr) {
+    MessageReceiver(int receivePort, moodycamel::ReaderWriterQueue<MIDIMessage>& q, moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue)
+        : juce::Thread("Message Receiver"), socket(nullptr), messageQueue(q), editorQueue(editorQueue) {
         this->receivePort = receivePort;
     }
 
@@ -35,6 +38,29 @@ public:
                     {
                         String message(buffer, bytesRead);
                         DBG("TCP: Received: " << message);
+
+                        // Get first character of message as integer
+                        int type = message.substring(0, 1).getIntValue();
+                        int note, velocity;
+                        // TODO Update
+                        int channel = 1;
+                        switch (type) {
+                            case 1:
+                                // Note on
+                                note = message.substring(1, 2).getIntValue();
+                                velocity = message.substring(2, 3).getIntValue();
+                                messageQueue.enqueue(MIDIMessage(channel, note, velocity, true));
+                                editorQueue.enqueue(MIDIMessage(channel, note, velocity, true));
+                                break;
+                            case 2:
+                                // Note off
+                                note = message.substring(1, 2).getIntValue();
+                                messageQueue.enqueue(MIDIMessage(channel, note, 0, false));
+                                editorQueue.enqueue(MIDIMessage(channel, note, 0, false));
+                                break;
+                            default:
+                                break;
+                        }
                     }
                 }
             }
@@ -50,6 +76,8 @@ public:
 
 private:
     std::unique_ptr<StreamingSocket> socket;
+    moodycamel::ReaderWriterQueue<MIDIMessage>& messageQueue;
+    moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue;
     int receivePort;
 };
 
