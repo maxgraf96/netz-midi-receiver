@@ -8,15 +8,16 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using UnityEngine;
+using UnityEngine.Events;
 using ThreadPriority = System.Threading.ThreadPriority;
 
 public class MIDIOut : MonoBehaviour
 {
     // Big mama toggle to turn MIDI out via network on or off
-    public static bool MIDI_OUT_ACTIVE = true;
+    public static bool MIDI_OUT_ACTIVE = false;
 
     private Thread midiSendThread;
-    private Thread heartbeatThread;
+    private Thread closeMessagesListener;
 
     private UdpClient udpClient;
     private static UdpClient udpSendClient;
@@ -36,14 +37,13 @@ public class MIDIOut : MonoBehaviour
     private static bool hasConnection = false;
 
     public static ConcurrentQueue<DataBuffer> inputQueue = new();
-    public static bool isMIDIOutActive = true;
-    public static bool isListeningToCloseMessages = true;
+
+    public UnityEvent<bool> MIDIOutStatusChangedEvent = new();
 
     public enum MIDIMessageType {
         NOTE_ON = 0,
         NOTE_OFF = 1,
         PITCH_BEND = 2,
-        HEARTBEAT = 3,
         UNDEFINED = 4
     }
 
@@ -59,24 +59,6 @@ public class MIDIOut : MonoBehaviour
 
     void Start()
     {
-        Application.targetFrameRate = 60;
-
-        udpClient = new UdpClient(UDP_LISTEN_PORT);
-        udpClient.Client.ReceiveTimeout = 500;
-        udpClient.Client.SendTimeout = 500;
-
-        udpSendClient = new UdpClient();
-
-        StartCoroutine(ListenToBeaconCoroutine());
-
-        // Start MIDI message thread
-        midiSendThread = new Thread(MIDISendThread.Run);
-        midiSendThread.Start();
-
-        // Start heartbeat thread
-        heartbeatThread = new Thread(CloseMessagesListener.Run);
-        heartbeatThread.Priority = ThreadPriority.Normal;
-        heartbeatThread.Start();
     }
 
     public void SendNoteOnMessage(int channel, int note, int velocity)
@@ -153,6 +135,9 @@ public class MIDIOut : MonoBehaviour
                 // Ugly but free concurrent
                 connectedClients[ip.Address.ToString()] = ip.Address.ToString();
                 hasConnection = true;
+
+                MIDIOutStatusChangedEvent.Invoke(true);
+
                 return true;
             }
             else
@@ -192,6 +177,7 @@ public class MIDIOut : MonoBehaviour
         {
             while (!hasConnection)
             {
+                MIDIOutStatusChangedEvent.Invoke(false);
                 var ClientEp = new IPEndPoint(IPAddress.Broadcast, UDP_LISTEN_PORT);
                 try
                 {
@@ -235,23 +221,7 @@ public class MIDIOut : MonoBehaviour
     {
         Debug.Log("Closing connection to all clients.");
 
-        isMIDIOutActive = false;
-        // Stop thread
-        midiSendThread.Join(300);
-
-        // Go through all tcp clients and close them -> send a message to the MIDI audio plugin to stop listening
-        foreach (var tcpClient in tcpClients)
-        {
-            Debug.Log("Closing TCP connection to " + tcpClient.Value.Client.RemoteEndPoint);
-            tcpClient.Value.Close();
-        }
-
-        // Close all connections
-        if(udpClient != null)
-            udpClient.Close();
-
-        if(udpSendClient != null)
-            udpSendClient.Close();
+        ShutdownMIDIOut();
     }
 
 
@@ -259,7 +229,7 @@ public class MIDIOut : MonoBehaviour
     {
         public static void Run()
         {
-            while (isMIDIOutActive)
+            while (MIDI_OUT_ACTIVE)
             {
                 while(inputQueue.TryDequeue(out DataBuffer message))
                 {
@@ -274,7 +244,7 @@ public class MIDIOut : MonoBehaviour
     {
         public static void Run()
         {
-            while (isListeningToCloseMessages)
+            while (MIDI_OUT_ACTIVE)
             {
                 List<string> ipsToRemove = new();
 
@@ -325,10 +295,92 @@ public class MIDIOut : MonoBehaviour
                     // Notify netz
                     Debug.Log("Connection to " + ip + " lost. Restarting beacon listener.");
                     Thread.Sleep(2000);
+
                     hasConnection = false;
                 }
                 Thread.Sleep(3000);
             }
         }
+    }
+
+    public void StartMIDIOut()
+    {
+        Debug.Log("Starting MIDI out...");
+        MIDI_OUT_ACTIVE = true;
+        udpClient = new UdpClient(UDP_LISTEN_PORT);
+        udpClient.Client.ReceiveTimeout = 500;
+        udpClient.Client.SendTimeout = 500;
+
+        udpSendClient = new UdpClient();
+
+        StartCoroutine(ListenToBeaconCoroutine());
+
+        // Start MIDI message thread
+        midiSendThread = new Thread(MIDISendThread.Run);
+        midiSendThread.Start();
+
+        // Start CloseMessagesListener thread
+        closeMessagesListener = new Thread(CloseMessagesListener.Run);
+        closeMessagesListener.Start();
+    }
+
+    /// <summary>
+    /// Shuts down the whole MIDI out system
+    /// </summary>
+    public void ShutdownMIDIOut()
+    {
+        Debug.Log("Shutting down MIDI out...");
+
+        MIDI_OUT_ACTIVE = false;
+        StopAllCoroutines();
+
+        // Go through all tcp clients and close them -> send a message to the MIDI audio plugin to stop listening
+        foreach (var tcpClient in tcpClients)
+        {
+            try
+            {
+                Debug.Log("Closing TCP connection to " + tcpClient.Value.Client.RemoteEndPoint);
+                tcpClient.Value.Close();
+            } catch (Exception e)
+            {
+                Debug.Log("Tried to close socket with " + tcpClient.Value.Client.RemoteEndPoint + " but it was already closed.");
+            }
+        }
+
+        // Close all connections
+        if (udpClient != null)
+        {
+            try
+            {
+                udpClient.Close();
+            } catch (Exception e)
+            {
+                Debug.Log("Tried to close UDP socket but it was already closed.");
+            }
+        }
+
+        if (udpSendClient != null)
+        {
+            try
+            {
+                udpSendClient.Close();
+            } catch (Exception e)
+            {
+                Debug.Log("Tried to close UDP socket but it was already closed.");
+            }
+        }
+
+        // Stop threads
+        midiSendThread.Join(300);
+        closeMessagesListener.Join(300);
+
+        // Empty containers
+        inputQueue.Clear();
+
+        // Reset static variables
+        connectedClients.Clear();
+        tcpClients.Clear();
+
+        hasConnection = false;
     }
 }
