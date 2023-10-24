@@ -1,187 +1,334 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using UnityEngine;
+using ThreadPriority = System.Threading.ThreadPriority;
 
 public class MIDIOut : MonoBehaviour
 {
+    // Big mama toggle to turn MIDI out via network on or off
+    public static bool MIDI_OUT_ACTIVE = true;
+
+    private Thread midiSendThread;
+    private Thread heartbeatThread;
+
     private UdpClient udpClient;
-    private Dictionary<string, TcpClient> connectedClients = new();
+    private static UdpClient udpSendClient;
+    private static ConcurrentDictionary<string, string> connectedClients = new();
+    private static ConcurrentDictionary<string, TcpClient> tcpClients = new();
 
-    private static readonly int BROADCAST_LISTEN_PORT = 12345;
-    private static readonly int SEND_PORT = 12346;
+    // Used to listen to beacons from the MIDI audio plugin
+    private static readonly int UDP_LISTEN_PORT = 50000;
+    // Used to send a response to the MIDI audio plugin
+    private static readonly int UDP_RESPONSE_PORT = 50001;
+    // Used to send MIDI messages to the MIDI audio plugin
+    private static readonly int UDP_MIDI_SEND_PORT = 50002;
+    // Used to keep track of connections through TCP
+    private static readonly int TCP_CONNECTION_PORT = 50003;
 
-    private float beaconListenInterval = 0.1f;
+    private readonly float beaconListenInterval = 0.5f;
+    private static bool hasConnection = false;
 
-    private TcpClient tcpClient;
+    public static ConcurrentQueue<DataBuffer> inputQueue = new();
+    public static bool isMIDIOutActive = true;
+    public static bool isListeningToCloseMessages = true;
 
-    public enum MIDIType
-    {
-        NoteOn = 1,
-        NoteOff,
-        ControlChange,
+    public enum MIDIMessageType {
+        NOTE_ON = 0,
+        NOTE_OFF = 1,
+        PITCH_BEND = 2,
+        HEARTBEAT = 3,
+        UNDEFINED = 4
     }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct DataBuffer
+    {
+        public MIDIMessageType messageType;
+        public int channel;
+        public int note;
+        public int velocity;
+        public float bend;
+    }
+
     void Start()
     {
         Application.targetFrameRate = 60;
 
-        udpClient = new UdpClient(BROADCAST_LISTEN_PORT);
+        udpClient = new UdpClient(UDP_LISTEN_PORT);
         udpClient.Client.ReceiveTimeout = 500;
         udpClient.Client.SendTimeout = 500;
+
+        udpSendClient = new UdpClient();
+
         StartCoroutine(ListenToBeaconCoroutine());
+
+        // Start MIDI message thread
+        midiSendThread = new Thread(MIDISendThread.Run);
+        midiSendThread.Start();
+
+        // Start heartbeat thread
+        heartbeatThread = new Thread(CloseMessagesListener.Run);
+        heartbeatThread.Priority = ThreadPriority.Normal;
+        heartbeatThread.Start();
     }
 
-    private void SendNoteOnMessage(int note, int velocity)
+    public void SendNoteOnMessage(int channel, int note, int velocity)
     {
-        Debug.Log("Sending note on message to all connected clients: " + note + " " + velocity);
+        DataBuffer sendData = new DataBuffer {
+            messageType = MIDIMessageType.NOTE_ON,
+            channel = channel,
+            note = note,
+            velocity = velocity,
+            bend = 0f
+        };
 
-        int channel = 1;
-        int[] integers = {channel, note, velocity};
-        byte[] data = new byte[integers.Length * sizeof(int)];
-
-        BitConverter.GetBytes(channel).CopyTo(data, 0);
-        BitConverter.GetBytes(note).CopyTo(data, sizeof(int));
-        BitConverter.GetBytes(velocity).CopyTo(data, sizeof(int) * 2);
-
-        // Send note on message to all connected clients
-        tcpClient.GetStream().Write(data, 0, data.Length);
-        foreach (var client in connectedClients)
-        {
-        }
+        inputQueue.Enqueue(sendData);
     }
 
-    private void SendNoteOffMessage(int note)
+    public void SendNoteOffMessage(int note, int channel)
     {
-        Debug.Log("Sending note off message to all connected clients: " + note);
-
-        int channel = 1;
         int velocity = 0;
-        int[] integers = {channel, note, velocity};
-        byte[] data = new byte[integers.Length * sizeof(int)];
 
-        BitConverter.GetBytes(channel).CopyTo(data, 0);
-        BitConverter.GetBytes(note).CopyTo(data, sizeof(int));
-        BitConverter.GetBytes(velocity).CopyTo(data, sizeof(int) * 2);
+        DataBuffer data = new DataBuffer {
+            messageType = MIDIMessageType.NOTE_OFF,
+            channel = channel,
+            note = note,
+            velocity = velocity,
+            bend = 0f
+        };
 
-        // Send note off message to all connected clients
-        tcpClient.GetStream().Write(data, 0, data.Length);
-
-        foreach (var client in connectedClients)
-        {
-        }
+        inputQueue.Enqueue(data);
     }
 
-    void RegisterMidiReceiver(string ip)
+    public void SendPitchBendMessage(int channel, float bendInSemitones)
+    {
+        DataBuffer data = new DataBuffer {
+            messageType = MIDIMessageType.PITCH_BEND,
+            channel = channel,
+            note = 0,
+            velocity = 0,
+            bend = bendInSemitones
+        };
+
+        inputQueue.Enqueue(data);
+    }
+
+    bool RegisterMidiReceiver(IPEndPoint ip)
     {
         // Add to list of connected clients
-        if(!connectedClients.TryAdd(ip, tcpClient))
-            return;
+        if (connectedClients.ContainsKey(ip.Address.ToString()))
+        {
+            Debug.Log("Connection already established with " + ip.Address + ".");
+            return false;
+        }
 
-        tcpClient = new TcpClient(ip, 12347);
+        // Send Unity ack -> this will start make the MIDI audio plugin listen to the TCP connection
+        // and start receiving MIDI messages
+        Debug.Log("Sending ACK to " + ip.Address + " on port " + UDP_RESPONSE_PORT + ".");
+        var ResponseData = Encoding.UTF8.GetBytes("NetzUnityAck");
+        var IPEndpoint = new IPEndPoint(ip.Address, UDP_RESPONSE_PORT);
+        udpClient.Send(ResponseData, ResponseData.Length, IPEndpoint);
 
-        Debug.Log("Successfully registered MIDI receiver at " + ip);
+        // Add TCP connection AFTER sending the UDP response (NetzUnityAck)
+        try
+        {
+            var timeout = 3000;
+            var client = new TcpClient();
+            bool connected = TryTCPConnect(client, ip.Address.ToString(), TCP_CONNECTION_PORT, timeout); // 3-second timeout
+            if (connected)
+            {
+                // Only return true if we successfully connected via TCP
+                tcpClients[ip.Address.ToString()] = client;
 
-        // Increase beacon listen interval, we already got a connection
-        beaconListenInterval = 3.0f;
-        // }
+                Debug.Log("Successfully TCP connected to " + ip.Address + " on port " + TCP_CONNECTION_PORT + ".");
+                Debug.Log("Successfully registered MIDI receiver at " + ip.Address + ".");
+
+                // Ugly but free concurrent
+                connectedClients[ip.Address.ToString()] = ip.Address.ToString();
+                hasConnection = true;
+                return true;
+            }
+            else
+            {
+                Debug.Log("TCP connection failed after " + timeout + "ms, retrying...");
+            }
+        } catch (SocketException e)
+        {
+            Debug.LogError(e);
+            Debug.Log("Couldn't establish TCP connection, aborting.");
+        }
+
+        return false;
+    }
+
+    public bool TryTCPConnect(TcpClient client, string host, int port, int timeout)
+    {
+        IAsyncResult result = client.BeginConnect(host, port, null, null);
+        bool success = result.AsyncWaitHandle.WaitOne(timeout, true);
+
+        if (success)
+        {
+            client.EndConnect(result);
+        }
+        else
+        {
+            // Timeout occurred, abort the connection attempt
+            client.Close();
+        }
+
+        return success;
     }
 
     private IEnumerator ListenToBeaconCoroutine()
     {
-        var ResponseData = Encoding.UTF8.GetBytes("SomeResponseData");
-        var ClientEp = new IPEndPoint(IPAddress.Broadcast, BROADCAST_LISTEN_PORT);
-
-        while (true)
+        while (MIDI_OUT_ACTIVE)
         {
-            try
+            while (!hasConnection)
             {
-                var netzMidiReceiverData = udpClient.Receive(ref ClientEp);
-                var dataStr = Encoding.UTF8.GetString(netzMidiReceiverData);
-                Debug.Log("Received " + dataStr + " from " + ClientEp.Address + ", sending response.");
-
-                var IPEndpoint = new IPEndPoint(ClientEp.Address, SEND_PORT);
-                udpClient.Send(ResponseData, ResponseData.Length, IPEndpoint);
-
-                if (dataStr.Contains("netz-midi-receiver"))
+                var ClientEp = new IPEndPoint(IPAddress.Broadcast, UDP_LISTEN_PORT);
+                try
                 {
-                    RegisterMidiReceiver(ClientEp.Address.ToString());
-                }
-            } catch (SocketException e)
-            {
-                if (e.SocketErrorCode != SocketError.TimedOut)
+                    var netzMidiReceiverData = udpClient.Receive(ref ClientEp);
+                    var dataStr = Encoding.UTF8.GetString(netzMidiReceiverData);
+                    Debug.Log("Received " + dataStr + " from " + ClientEp.Address + ", sending response.");
+
+                    if (dataStr.Contains("netz-midi-receiver"))
+                    {
+                        if (RegisterMidiReceiver(ClientEp))
+                        {
+                            // Success!
+                            Debug.Log("Connection established with " + ClientEp.Address + ".");
+                        }
+                    }
+                } catch (SocketException e)
                 {
-                    Debug.LogError(e);
+                    Debug.Log("No connection yet...");
                 }
+
+                yield return new WaitForSeconds(beaconListenInterval);
             }
-
-            yield return new WaitForSeconds(beaconListenInterval);
+            yield return new WaitForSeconds(3.0f);
         }
+
     }
 
-    private void Update()
-    {
-        if(connectedClients.Count == 0)
-            return;
-
-        // Listen to keyboard input
-        if (Input.GetKeyDown(KeyCode.A))
+    // The method above but using a UDP client
+    static void SendData(DataBuffer data) {
+        byte[] bytes = new byte[Marshal.SizeOf(typeof(DataBuffer))];
+        GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+        Marshal.StructureToPtr(data, handle.AddrOfPinnedObject(), false);
+        handle.Free();
+        foreach (var clientIP in connectedClients)
         {
-            SendNoteOnMessage(60, 80);
-        }
-
-        if (Input.GetKeyUp(KeyCode.A))
-        {
-            SendNoteOffMessage(60);
-        }
-
-        // Same for s, d, f keys, chromatic scale
-        if (Input.GetKeyDown(KeyCode.S))
-        {
-            SendNoteOnMessage(62, 80);
-        }
-
-        if (Input.GetKeyUp(KeyCode.S))
-        {
-            SendNoteOffMessage(62);
-        }
-
-        if (Input.GetKeyDown(KeyCode.D))
-        {
-            SendNoteOnMessage(64, 80);
-        }
-
-        if (Input.GetKeyUp(KeyCode.D))
-        {
-            SendNoteOffMessage(64);
-        }
-
-        if (Input.GetKeyDown(KeyCode.F))
-        {
-            SendNoteOnMessage(65, 80);
-        }
-
-        if (Input.GetKeyUp(KeyCode.F))
-        {
-            SendNoteOffMessage(65);
+            udpSendClient.Send(bytes, bytes.Length, clientIP.Key, UDP_MIDI_SEND_PORT);
         }
     }
 
     private void OnApplicationQuit()
     {
         Debug.Log("Closing connection to all clients.");
-        // foreach (var client in connectedClients)
-        // {
-            // client.Value.GetStream().Close();
-            // client.Value.Close();
-        // }
 
-        // Close connection to client
-        tcpClient.GetStream().Close();
-        tcpClient.Close();
+        isMIDIOutActive = false;
+        // Stop thread
+        midiSendThread.Join(300);
+
+        // Go through all tcp clients and close them -> send a message to the MIDI audio plugin to stop listening
+        foreach (var tcpClient in tcpClients)
+        {
+            Debug.Log("Closing TCP connection to " + tcpClient.Value.Client.RemoteEndPoint);
+            tcpClient.Value.Close();
+        }
+
+        // Close all connections
+        if(udpClient != null)
+            udpClient.Close();
+
+        if(udpSendClient != null)
+            udpSendClient.Close();
+    }
+
+
+    public class MIDISendThread
+    {
+        public static void Run()
+        {
+            while (isMIDIOutActive)
+            {
+                while(inputQueue.TryDequeue(out DataBuffer message))
+                {
+                    SendData(message);
+                }
+                Thread.Sleep(3);
+            }
+        }
+    }
+
+    public class CloseMessagesListener
+    {
+        public static void Run()
+        {
+            while (isListeningToCloseMessages)
+            {
+                List<string> ipsToRemove = new();
+
+                // Check for data on our TCP clients
+                foreach (var tcpClient in tcpClients)
+                {
+
+                    // Read data
+                    var closeMessage = new byte[5];
+
+                    try
+                    {
+                        String ip = tcpClient.Value.Client.RemoteEndPoint.ToString();
+                        tcpClient.Value.GetStream().Read(closeMessage, 0, closeMessage.Length);
+                        var dataStr = Encoding.UTF8.GetString(closeMessage);
+                        ipsToRemove.Add(tcpClient.Key);
+                        Debug.Log("Received close message '" + dataStr + "' from " + ip +
+                                  ".");
+                        Debug.Log("Closing TCP connection to " + ip + ".");
+                    }
+                    catch (Exception e)
+                    {
+                        // Don't need to do anything here, just means there is no data
+                        Debug.Log("Exception while reading from TCP client: " + e);
+                        Debug.Log("Note: this is normal as long as there are TCP clients connected.");
+                        Debug.Log("If you get this while closing the MIDI receiver plug-in, you're doing something bad.");
+                        Debug.LogError(e);
+                    }
+                }
+
+                // Remove clients that have lost connection
+                foreach (var ip in ipsToRemove)
+                {
+                    TcpClient removedClient;
+                    Debug.Log("Removing client " + ip + " from list of connected TCP clients.");
+                    tcpClients.TryRemove(ip, out removedClient);
+                    connectedClients.TryRemove(ip, out _);
+                    try
+                    {
+                        Debug.Log("Trying to close removed TCP socket.");
+                        removedClient.GetStream().Close(100);
+                        removedClient.Close();
+                    } catch (Exception e)
+                    {
+                        Debug.Log("Tried to close socket with " + ip + " but it was already closed.");
+                    }
+
+                    // Notify netz
+                    Debug.Log("Connection to " + ip + " lost. Restarting beacon listener.");
+                    Thread.Sleep(2000);
+                    hasConnection = false;
+                }
+                Thread.Sleep(3000);
+            }
+        }
     }
 }
