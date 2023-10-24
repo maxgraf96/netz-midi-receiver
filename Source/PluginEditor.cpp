@@ -83,6 +83,8 @@ void NetzMIDIReceiverAudioProcessorEditor::resized()
     // Perform the layout
     flexBox.performLayout(getLocalBounds());
 
+
+
 }
 
 void NetzMIDIReceiverAudioProcessorEditor::timerCallback()
@@ -91,11 +93,11 @@ void NetzMIDIReceiverAudioProcessorEditor::timerCallback()
 
     if(processor.getConnected()){
         connectedLabel.setColour(juce::Label::backgroundColourId, juce::Colours::darkgreen);
-        connectedLabel.setText("Connected.", dontSendNotification);
+        connectedLabel.setText("Connected to " + processor.getSenderIP(), dontSendNotification);
         textEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colours::darkgreen);
     } else {
         connectedLabel.setColour(juce::Label::backgroundColourId, juce::Colours::red);
-        connectedLabel.setText("Not connected.", dontSendNotification);
+        connectedLabel.setText("Not connected", dontSendNotification);
         textEditor.setColour(juce::TextEditor::backgroundColourId, juce::Colours::black);
     }
 

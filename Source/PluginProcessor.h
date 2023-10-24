@@ -11,6 +11,7 @@
 #include <readerwriterqueue.h>
 #include "MessageReceiver.h"
 #include "MIDIMessage.h"
+#include "ConnectionStatusManager.h"
 
 class NetzMIDIReceiverAudioProcessor  : public juce::AudioProcessor
 {
@@ -46,6 +47,10 @@ public:
         return isConnected;
     }
 
+    String getSenderIP() const {
+        return senderIP;
+    }
+
     void lookForBeacons();
 
 private:
@@ -54,10 +59,19 @@ private:
     String senderIP;
     std::atomic<bool> isConnected = false;
 
-    int BROADCAST_PORT = 12345;
-    int RECEIVE_PORT = 12346;
+    std::unique_ptr<DatagramSocket> beaconSocket;
+
+    // Port used to broadcast UDP beacon
+    int UDP_BROADCAST_PORT = 50000;
+    // Port used to send UDP connection acknowledgement
+    int UDP_CONNECTION_ACKNOWLEDGEMENT_PORT = 50001;
+    // Port used to receive UDP MIDI messages from netz
+    int UDP_MIDI_RECEIVE_PORT = 50002;
+    // Port used to hold TCP connection in order to keep track of connection status
+    int TCP_CONNECTION_PORT = 50003;
 
     std::unique_ptr<MessageReceiver> messageReceiver;
+    std::unique_ptr<ConnectionStatusManager> connectionStatusManager;
 
     // This one is connected to the message receiver thread
     moodycamel::ReaderWriterQueue<MIDIMessage> messageQueue;

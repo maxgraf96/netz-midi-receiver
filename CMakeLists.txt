@@ -13,6 +13,7 @@ set(SOURCES
         Source/MessageReceiver.h
         Source/MIDIMessage.h
         Source/CustomLookAndFeel.h
+        Source/ConnectionStatusManager.h
 )
 
 # Define the plugin's headers
@@ -22,6 +23,7 @@ set(HEADERS
         Source/MessageReceiver.h
         Source/MIDIMessage.h
         Source/CustomLookAndFeel.h
+        Source/ConnectionStatusManager.h
 )
 
 # Define the VST3 UID - you should change this to a unique value

@@ -18,6 +18,11 @@ NetzMIDIReceiverAudioProcessor::NetzMIDIReceiverAudioProcessor()
 }
 
 NetzMIDIReceiverAudioProcessor::~NetzMIDIReceiverAudioProcessor() {
+    isConnected = true; // Just to shut down the thread
+
+    if(beaconSocket)
+        beaconSocket->shutdown();
+
     threadPool.removeAllJobs(true, 1000, nullptr);
 }
 
@@ -60,7 +65,8 @@ void NetzMIDIReceiverAudioProcessor::changeProgramName(int index, const juce::St
 }
 
 void NetzMIDIReceiverAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
-    messageReceiver = std::make_unique<MessageReceiver>(12347, messageQueue, editorQueue, connectionLostQ);
+    messageReceiver = std::make_unique<MessageReceiver>(UDP_MIDI_RECEIVE_PORT, messageQueue, editorQueue);
+    connectionStatusManager = std::make_unique<ConnectionStatusManager>(TCP_CONNECTION_PORT, connectionLostQ);
 
     // Add a job to the thread pool using a lambda
     threadPool.addJob([&]() {
@@ -69,8 +75,18 @@ void NetzMIDIReceiverAudioProcessor::prepareToPlay(double sampleRate, int sample
 }
 
 void NetzMIDIReceiverAudioProcessor::releaseResources() {
+    // Send the bye message to Unity if we're connected
+    connectionStatusManager->goodbye();
+    connectionStatusManager->cleanUp();
+
+    isConnected = true; // Just to shut down the thread
+
     // Release any resources that were allocated in prepareToPlay
     threadPool.removeAllJobs(true, 1000, nullptr);
+
+    if(beaconSocket)
+        beaconSocket->shutdown();
+    beaconSocket.reset();
 }
 
 void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buffer, juce::MidiBuffer &midiMessages) {
@@ -97,6 +113,9 @@ void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buff
                 // JUCE pitch wheel is in range 0 to 16383
                 midiMessages.addEvent(MidiMessage::pitchWheel(channel, message.pitchBend), 0);
                 break;
+            case HEARTBEAT:
+
+                break;
             case UNDEFINED:
                 break;
         }
@@ -122,40 +141,61 @@ void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buff
 
 void NetzMIDIReceiverAudioProcessor::lookForBeacons() {
     isConnected = false;
-    std::unique_ptr<DatagramSocket> socket = std::make_unique<DatagramSocket>(true);
-    std::unique_ptr<DatagramSocket> receiveSocket = std::make_unique<DatagramSocket>(true);
-    receiveSocket->bindToPort(RECEIVE_PORT);
+    // This port is used to broadcast our UDP beacon, essentially telling Unity that we're here
+    beaconSocket = std::make_unique<DatagramSocket>(true);
+    // This socket just listens for the connection acknowledgement from Unity
+    std::unique_ptr<DatagramSocket> connectionAckSocket = std::make_unique<DatagramSocket>(true);
+    connectionAckSocket->bindToPort(UDP_CONNECTION_ACKNOWLEDGEMENT_PORT);
 
+    // This string is sent to Unity as a UDP broadcast, if unity finds it, it connects to us
     String broadcastData = "netz-midi-receiver: ping.";
-
     // Convert JUCE string to MemoryBlock for sending
     MemoryBlock broadcastDataBlock(broadcastData.toRawUTF8(), broadcastData.getNumBytesAsUTF8());
 
     while (!isConnected) {
         // Send the request
-        bool sendResult = socket->write("255.255.255.255", BROADCAST_PORT, broadcastDataBlock.getData(),
-                                        broadcastDataBlock.getSize());
+        bool sendResult = beaconSocket->write("255.255.255.255", UDP_BROADCAST_PORT, broadcastDataBlock.getData(),
+                                              broadcastDataBlock.getSize());
 
         if (!sendResult) {
             DBG("Failed to send request.");
-            return;
+            juce::Thread::sleep(100);
+            continue;
         }
 
-        char buffer[512]; // Assuming 512 bytes is enough for the response; adjust as needed
+        // Buffer to hold the response from Unity
+        char buffer[512];
+        // These fields will be populated with the sender's IP and port
+        senderIP = "";
         int senderPort;
 
-        // Receive the server response
-        int bytesRead = receiveSocket->read(buffer, sizeof(buffer), false, senderIP, senderPort);
+        // Try to receive the response from Unity
+        int bytesRead = connectionAckSocket->read(buffer, sizeof(buffer), false, senderIP, senderPort);
 
-        if (senderPort == RECEIVE_PORT || senderPort == BROADCAST_PORT) {
+        // If we get a response from these two ports it's most likely from Unity
+        if (senderPort == UDP_BROADCAST_PORT || senderPort == UDP_CONNECTION_ACKNOWLEDGEMENT_PORT) {
+            // Good if we get some data back
             if (bytesRead > 0) {
-                String serverResponse = String::fromUTF8(buffer, bytesRead);
-                DBG("Received " + serverResponse + " from " + senderIP);
+                String response = String::fromUTF8(buffer, bytesRead);
+                DBG("Received response " + response + " from " + senderIP);
+                // Check if the response contains the string we're looking for
+                if(!response.contains("NetzUnityAck")){
+                    juce::Thread::sleep(100);
+                    DBG("Acknowledgement correct, connecting to " + senderIP);
+                    continue;
+                }
+                // Yay, we're connected!
                 isConnected = true;
-                receiveSocket->shutdown();
+                connectionAckSocket->shutdown();
 
+                // Start MIDI message receiver thread if it's not already running
+                // (this is the case if we've lost connection and reconnected)
                 if(!messageReceiver->isThreadRunning())
                     messageReceiver->startThread();
+                // (Re-)start connection status manager thread
+                // Always clean up the old thread first
+                connectionStatusManager->cleanUp();
+                connectionStatusManager->startThread();
             } else {
                 DBG("Failed to receive a response.");
             }
@@ -163,6 +203,11 @@ void NetzMIDIReceiverAudioProcessor::lookForBeacons() {
 
         juce::Thread::sleep(100);
     }
+
+    if(beaconSocket){
+        beaconSocket->shutdown();
+    }
+    beaconSocket.reset();
 }
 
 bool NetzMIDIReceiverAudioProcessor::hasEditor() const {

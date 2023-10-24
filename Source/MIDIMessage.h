@@ -11,7 +11,8 @@ enum MIDIMessageType {
     NOTE_ON = 0,
     NOTE_OFF = 1,
     PITCH_BEND = 2,
-    UNDEFINED = 3
+    HEARTBEAT = 3,
+    UNDEFINED = 4
 };
 
 struct MIDIMessage {

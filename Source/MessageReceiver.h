@@ -12,12 +12,10 @@
 class MessageReceiver : public juce::Thread
 {
 public:
-    MessageReceiver(int receivePort, moodycamel::ReaderWriterQueue<MIDIMessage>& q, moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue, moodycamel::ReaderWriterQueue<bool>& connectionLostQ)
+    MessageReceiver(int receivePort, moodycamel::ReaderWriterQueue<MIDIMessage>& q, moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue)
         : juce::Thread("Message Receiver"),
-        socket(nullptr),
         messageQueue(q),
-        editorQueue(editorQueue),
-        connectionLostQ(connectionLostQ)
+        editorQueue(editorQueue)
         {
         this->receivePort = receivePort;
     }
@@ -32,75 +30,70 @@ public:
 
     void run() override
     {
-        socket = std::make_unique<StreamingSocket>();
+        receiveSocket = std::make_unique<DatagramSocket>(false);
+        receiveSocket->bindToPort(receivePort);
 
-        if (socket->createListener(receivePort, "0.0.0.0"))  // Bind to receivePort on any interface
+        while (!threadShouldExit())
         {
-            std::unique_ptr<StreamingSocket> clientSocket;
+            // Receive 4 mixed ints/floats
+            DataBuffer buffer{};
+            int bytesRead = receiveSocket->read(&buffer, sizeof(buffer), true);
 
-            while (!threadShouldExit())
+            if (bytesRead > 0)
             {
-                clientSocket.reset(socket->waitForNextConnection());
+                // Convert char array to int array
+                MIDIMessageType type = buffer.type;
+                int channel = buffer.channel;
+                int note = buffer.note;
+                int velocity = buffer.velocity;
+                // Map pitch bend from our bend in semitones (-7 to 7) to JUCE's 0-16383 range
+                int bend = (int) ((buffer.pitchBend + 7.0f) / 14 * 16383);
 
-                while (clientSocket)
-                {
-                    // Receive 4 mixed ints/floats
-                    DataBuffer buffer{};
-                    int bytesRead = clientSocket->read(&buffer, sizeof(buffer), true);
-
-                    if (bytesRead > 0)
-                    {
-                        // Convert char array to int array
-                        MIDIMessageType type = buffer.type;
-                        int channel = buffer.channel;
-                        int note = buffer.note;
-                        int velocity = buffer.velocity;
-                        // Map pitch bend from our bend in semitones (-7 to 7) to JUCE's 0-16383 range
-                        int bend = (int) ((buffer.pitchBend + 7.0f) / 14 * 16383);
-
-                        switch(type){
-                            case NOTE_ON:
-                                // Note on
-                                messageQueue.enqueue(MIDIMessage(type, channel, note, velocity, true));
-                                editorQueue.enqueue(MIDIMessage(type, channel, note, velocity, true));
-                                break;
-                            case NOTE_OFF:
-                                // Note off
-                                messageQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
-                                editorQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
-                                break;
-                            case PITCH_BEND:
-                                // Pitch bend
-                                messageQueue.enqueue(MIDIMessage(type, channel, bend));
-//                                editorQueue.enqueue(MIDIMessage(type, channel, bend));
-                                break;
-                            default:
-                                break;
-                        }
-
-                    } else if(bytesRead <= 0){
-                        // Socket closed, wait for another connection
-                        DBG("Connection closed.");
-                        connectionLostQ.enqueue(true);
+                switch(type){
+                    case NOTE_ON:
+                        // Note on
+                        messageQueue.enqueue(MIDIMessage(type, channel, note, velocity, true));
+                        editorQueue.enqueue(MIDIMessage(type, channel, note, velocity, true));
                         break;
-                    }
+                    case NOTE_OFF:
+                        // Note off
+                        messageQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
+                        editorQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
+                        break;
+                    case PITCH_BEND:
+                        // Pitch bend
+                        messageQueue.enqueue(MIDIMessage(type, channel, bend));
+                        break;
+                    case HEARTBEAT:
+                        // Heartbeat
+                        DBG("Heartbeat received.");
+                        messageQueue.enqueue(MIDIMessage(type, channel, 0));
+                        editorQueue.enqueue(MIDIMessage(type, channel, 0));
+                        break;
+                    default:
+                        break;
                 }
+
             }
         }
+    }
+
+    void closeSocket(){
+        if(receiveSocket)
+            receiveSocket->shutdown();
     }
 
     ~MessageReceiver()
     {
         signalThreadShouldExit();
-        stopThread(1000); // Wait for the thread to stop.
-        waitForThreadToExit(1000);
+        closeSocket();
+        stopThread(1000);
     }
 
 private:
-    std::unique_ptr<StreamingSocket> socket;
+    std::unique_ptr<DatagramSocket> receiveSocket;
     moodycamel::ReaderWriterQueue<MIDIMessage>& messageQueue;
     moodycamel::ReaderWriterQueue<MIDIMessage>& editorQueue;
-    moodycamel::ReaderWriterQueue<bool>& connectionLostQ;
     int receivePort;
 };
 
