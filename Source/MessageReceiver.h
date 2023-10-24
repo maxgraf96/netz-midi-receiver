@@ -72,7 +72,7 @@ public:
                             case PITCH_BEND:
                                 // Pitch bend
                                 messageQueue.enqueue(MIDIMessage(type, channel, bend));
-                                editorQueue.enqueue(MIDIMessage(type, channel, bend));
+//                                editorQueue.enqueue(MIDIMessage(type, channel, bend));
                                 break;
                             default:
                                 break;

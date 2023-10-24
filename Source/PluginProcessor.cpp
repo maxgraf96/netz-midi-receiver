@@ -100,6 +100,7 @@ void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buff
             case UNDEFINED:
                 break;
         }
+        
     }
 
     // Clear audio buffer

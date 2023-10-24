@@ -76,4 +76,4 @@ target_link_libraries(NetzMIDIReceiver
         juce::juce_gui_basics
         juce::juce_gui_extra)
 
-# Add other necessary configurations, flags, etc.
+
