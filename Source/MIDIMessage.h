@@ -11,7 +11,7 @@ enum MIDIMessageType {
     NOTE_ON = 0,
     NOTE_OFF = 1,
     PITCH_BEND = 2,
-    HEARTBEAT = 3,
+    CHANNEL_PRESSURE = 3,
     UNDEFINED = 4
 };
 
@@ -20,7 +20,7 @@ struct MIDIMessage {
     int channel;
     int note;
     int velocity;
-    int pitchBend;
+    int pitchBend; // Or aftertouch, depending on message type
 
     MIDIMessage(){
         this->type = UNDEFINED;
@@ -47,6 +47,8 @@ struct MIDIMessage {
             return "Type: " + String(type) + ", Channel: " + String(channel) + ", Note: " + String(note) + ", Velocity: " + String(velocity);
         else if(type == PITCH_BEND)
             return "Type: " + String(type) + ", Channel: " + String(channel) + ", Pitch Bend: " + String(pitchBend);
+        else if(type == CHANNEL_PRESSURE)
+            return "Type: " + String(type) + ", Channel: " + String(channel) + ", Aftertouch: " + String(pitchBend);
         else
             return "Type: " + String(type) + ", Channel: " + String(channel);
     }

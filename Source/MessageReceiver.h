@@ -46,8 +46,7 @@ public:
                 int channel = buffer.channel;
                 int note = buffer.note;
                 int velocity = buffer.velocity;
-                // Map pitch bend from our bend in semitones (-7 to 7) to JUCE's 0-16383 range
-                int bend = (int) ((buffer.pitchBend + 7.0f) / 14 * 16383);
+                int bend;
 
                 switch(type){
                     case NOTE_ON:
@@ -60,15 +59,16 @@ public:
                         messageQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
                         editorQueue.enqueue(MIDIMessage(type, channel, note, 0, false));
                         break;
+                    // Same handling for both pitch bend and aftertouch
                     case PITCH_BEND:
-                        // Pitch bend
+                        // Map pitch bend from our bend in semitones (-7 to 7) to JUCE's 0-16383 range
+                        bend = (int) ((buffer.pitchBend + 7.0f) / 14 * 16383);
                         messageQueue.enqueue(MIDIMessage(type, channel, bend));
+
                         break;
-                    case HEARTBEAT:
-                        // Heartbeat
-                        DBG("Heartbeat received.");
-                        messageQueue.enqueue(MIDIMessage(type, channel, 0));
-                        editorQueue.enqueue(MIDIMessage(type, channel, 0));
+                    case CHANNEL_PRESSURE:
+                        bend = (int) buffer.pitchBend;
+                        messageQueue.enqueue(MIDIMessage(type, channel, bend));
                         break;
                     default:
                         break;

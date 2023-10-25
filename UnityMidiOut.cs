@@ -44,6 +44,7 @@ public class MIDIOut : MonoBehaviour
         NOTE_ON = 0,
         NOTE_OFF = 1,
         PITCH_BEND = 2,
+        CHANNEL_PRESSURE = 3,
         UNDEFINED = 4
     }
 
@@ -54,7 +55,7 @@ public class MIDIOut : MonoBehaviour
         public int channel;
         public int note;
         public int velocity;
-        public float bend;
+        public float bend; // Or aftertouch value
     }
 
     void Start()
@@ -97,6 +98,19 @@ public class MIDIOut : MonoBehaviour
             note = 0,
             velocity = 0,
             bend = bendInSemitones
+        };
+
+        inputQueue.Enqueue(data);
+    }
+
+    public void SendChannelPressureMessage(int channel, float value)
+    {
+        DataBuffer data = new DataBuffer {
+            messageType = MIDIMessageType.CHANNEL_PRESSURE,
+            channel = channel,
+            note = 0,
+            velocity = 0,
+            bend = value
         };
 
         inputQueue.Enqueue(data);
@@ -193,7 +207,7 @@ public class MIDIOut : MonoBehaviour
                             Debug.Log("Connection established with " + ClientEp.Address + ".");
                         }
                     }
-                } catch (SocketException e)
+                } catch (SocketException)
                 {
                     Debug.Log("No connection yet...");
                 }
@@ -287,7 +301,7 @@ public class MIDIOut : MonoBehaviour
                         Debug.Log("Trying to close removed TCP socket.");
                         removedClient.GetStream().Close(100);
                         removedClient.Close();
-                    } catch (Exception e)
+                    } catch (Exception)
                     {
                         Debug.Log("Tried to close socket with " + ip + " but it was already closed.");
                     }
@@ -341,7 +355,7 @@ public class MIDIOut : MonoBehaviour
             {
                 Debug.Log("Closing TCP connection to " + tcpClient.Value.Client.RemoteEndPoint);
                 tcpClient.Value.Close();
-            } catch (Exception e)
+            } catch (Exception)
             {
                 Debug.Log("Tried to close socket with " + tcpClient.Value.Client.RemoteEndPoint + " but it was already closed.");
             }
@@ -353,7 +367,7 @@ public class MIDIOut : MonoBehaviour
             try
             {
                 udpClient.Close();
-            } catch (Exception e)
+            } catch (Exception)
             {
                 Debug.Log("Tried to close UDP socket but it was already closed.");
             }
@@ -364,15 +378,17 @@ public class MIDIOut : MonoBehaviour
             try
             {
                 udpSendClient.Close();
-            } catch (Exception e)
+            } catch (Exception)
             {
                 Debug.Log("Tried to close UDP socket but it was already closed.");
             }
         }
 
         // Stop threads
-        midiSendThread.Join(300);
-        closeMessagesListener.Join(300);
+        if(midiSendThread != null)
+            midiSendThread.Join(300);
+        if(closeMessagesListener != null)
+            closeMessagesListener.Join(300);
 
         // Empty containers
         inputQueue.Clear();

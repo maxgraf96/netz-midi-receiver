@@ -113,8 +113,9 @@ void NetzMIDIReceiverAudioProcessor::processBlock(juce::AudioBuffer<float> &buff
                 // JUCE pitch wheel is in range 0 to 16383
                 midiMessages.addEvent(MidiMessage::pitchWheel(channel, message.pitchBend), 0);
                 break;
-            case HEARTBEAT:
-
+            case CHANNEL_PRESSURE:
+                midiMessages.addEvent(MidiMessage::channelPressureChange(channel, message.pitchBend), 0);
+                DBG("Channel pressure: " + String(message.pitchBend));
                 break;
             case UNDEFINED:
                 break;
